@@ -1,3 +1,4 @@
+import org.gradle.kotlin.dsl.provideDelegate
 import java.io.FileOutputStream
 import java.net.URL
 
@@ -25,20 +26,21 @@ val nexusUrl: String? by project
 val nexusUsername: String? by project  
 val nexusPassword: String? by project
 
+val gradleVersion: String? by project
+val gitRemoteUrl: String? by project
+
 publishing {
     publications {
         create<MavenPublication>("gradle-wrapper") {
             groupId = "org.gradle"
             
             afterEvaluate {
-                val gradleVersionString = project.findProperty("gradleVersion") as? String ?: return@afterEvaluate
-                val distType = project.findProperty("distributionType") as? String ?: "bin"
-                
-                // Use gradle-{version}-{type} as artifactId and version as version
-                artifactId = "gradle-$gradleVersionString-$distType"
-                version = gradleVersionString
-                
-                val wrapperFile = file("gradle-$gradleVersionString-$distType.zip")
+                val gradleVersionFull = gradleVersion ?: return@afterEvaluate
+
+                artifactId = "gradle"
+                version = gradleVersionFull
+
+                val wrapperFile = file("gradle-$gradleVersionFull.zip")
                 if (wrapperFile.exists()) {
                     artifact(wrapperFile) {
                         extension = "zip"
@@ -64,32 +66,29 @@ publishing {
 tasks.register<MirrorGradleTask>("mirrorGradle") {
     group = "gradle-mirror"
     description = "Downloads Gradle distribution and publishes to Nexus repository"
-    
-    val projectGradleVersion = project.findProperty("gradleVersion") as? String
-    val projectDistributionType = project.findProperty("distributionType") as? String ?: "bin"
-    
-    gradleVersion.set(projectGradleVersion ?: "")
-    distributionType.set(projectDistributionType)
+
+    targetVersion.set(gradleVersion)
     outputDir.convention(layout.buildDirectory.dir("gradle-wrappers"))
 }
 
 tasks.register<MirrorAllGradleTask>("mirrorAllGradle") {
     group = "gradle-mirror"
     description = "Mirrors all Gradle versions from 8.0 to latest"
-    
-    val projectDistributionType = project.findProperty("distributionType") as? String ?: "bin"
-    val projectFromVersion = project.findProperty("fromVersion") as? String ?: "8.0"
-    
-    distributionType.set(projectDistributionType)
+
+    val projectFromVersion = project.findProperty("fromVersion") as? String ?: "8.0-bin"
+    val projectDistType = project.findProperty("distType") as? String ?: "bin"
+
     fromVersion.set(projectFromVersion)
+    distType.set(projectDistType)
     outputDir.convention(layout.buildDirectory.dir("gradle-wrappers"))
 }
 
+
 // Shared utility object
 object GradleMirrorUtils {
-    fun checkIfVersionExists(project: Project, version: String, distType: String): Boolean {
+    fun checkIfVersionExists(project: Project, gradleVersion: String): Boolean {
         return try {
-            val tagName = "gradle-$version-$distType"
+            val tagName = "gradle-$gradleVersion"
             
             // Check if tag exists locally using git command
             val process = ProcessBuilder("git", "tag", "-l", tagName)
@@ -114,11 +113,11 @@ object GradleMirrorUtils {
         }
     }
     
-    fun tagGitRepository(project: Project, version: String, distType: String) {
+    fun tagGitRepository(project: Project, gradleVersion: String) {
         try {
-            val gitRemoteUrl = project.findProperty("git.remote.url") as? String
-            val tagName = "gradle-$version-$distType"
-            val tagMessage = "Gradle $version $distType distribution mirrored"
+            val gitRemoteUrl = project.findProperty("gitRemoteUrl") as? String
+            val tagName = "gradle-$gradleVersion"
+            val tagMessage = "Gradle $gradleVersion distribution mirrored"
             
             println("Creating git tag '$tagName'...")
             
@@ -157,13 +156,13 @@ object GradleMirrorUtils {
         }
     }
     
-    fun publishToMavenLocal(project: Project, version: String, distType: String) {
+    fun publishToMavenLocal(project: Project, gradleVersion: String) {
         try {
-            println("Publishing gradle-$version-$distType.zip to Maven Local...")
-            
+            println("Publishing gradle-$gradleVersion.zip to Maven Local...")
+
             val processBuilder = ProcessBuilder(
-                "./gradlew", "publishToMavenLocal", 
-                "-PgradleVersion=$version", "-PdistributionType=$distType"
+                "./gradlew", "publishToMavenLocal",
+                "-PgradleVersion=$gradleVersion"
             )
             processBuilder.directory(project.rootDir)
             processBuilder.inheritIO()
@@ -173,60 +172,56 @@ object GradleMirrorUtils {
                 throw RuntimeException("Publish command failed with exit code $exitCode")
             }
             
-            println("✅ Successfully published org.gradle:gradle-$version-$distType:$version@zip to Maven Local")
-            println("Run './gradlew publish -PgradleVersion=$version -PdistributionType=$distType' to publish to Nexus")
-            
+            println("✅ Successfully published org.gradle:gradle:$gradleVersion@zip to Maven Local")
+            println("Run './gradlew publish -PgradleVersion=$gradleVersion' to publish to Nexus")
+
         } catch (e: Exception) {
             println("❌ Failed to publish: ${e.message}")
-            println("You can manually run: ./gradlew publish -PgradleVersion=$version -PdistributionType=$distType")
+            println("You can manually run: ./gradlew publish -PgradleVersion=$gradleVersion")
         }
     }
 }
 
 abstract class MirrorGradleTask : DefaultTask() {
     @get:Input
-    abstract val gradleVersion: Property<String>
-    
-    @get:Input
-    abstract val distributionType: Property<String>
-    
+    abstract val targetVersion: Property<String>
+
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
-    
+
     @TaskAction
     fun mirrorGradle() {
-        val inputVersion = gradleVersion.get()
-        val distType = distributionType.get()
-        
-        // Get version (either provided or fetch latest)
-        val version = inputVersion.ifBlank {
+        val inputVersion = targetVersion.get()
+
+        // Validate and normalize gradle version format
+        val gradleVersion = if (inputVersion.isBlank()) {
+            // Auto-detect latest version
             println("No gradleVersion specified, fetching latest version...")
-            getLatestGradleVersion()
+            val latestVersion = getLatestGradleVersion()
+            "$latestVersion-bin"
+        } else {
+            // Validate full version format: 8.5-bin, 8.4.1-all, 7.6-rc-1-bin, 8.5
+            val gradleVersionRegex = Regex("""^(\d+\.\d+(?:\.\d+)?(?:-\w+)?)(?:-(bin|all))?$""")
+            val matchResult = gradleVersionRegex.find(inputVersion)
+                ?: throw IllegalArgumentException("Invalid gradleVersion format: '$inputVersion'. Valid formats: 8.5-bin, 8.4.1-all, 7.6-rc-1-bin, 8.5")
+
+            val version = matchResult.groupValues[1]
+            val distType = matchResult.groupValues[2].ifEmpty { "bin" }
+            "$version-$distType"
         }
-        
-        // Validate gradle version format
-        val versionRegex = Regex("""^\d+\.\d+(?:\.\d+)?(?:-\w+)?$""")
-        if (!versionRegex.matches(version)) {
-            throw IllegalArgumentException("Invalid Gradle version format: $version. Expected format: x.y[.z][-qualifier] (e.g., 8.5, 8.4.1, 7.6-rc-1)")
-        }
-        
-        // Validate distribution type
-        if (distType !in listOf("bin", "all")) {
-            throw IllegalArgumentException("Invalid distribution type: $distType. Must be 'bin' or 'all'")
-        }
-        
-        val downloadUrl = "https://services.gradle.org/distributions/gradle-$version-$distType.zip"
-        val outputFile = outputDir.get().file("gradle-$version-$distType.zip").asFile
+
+        val downloadUrl = "https://services.gradle.org/distributions/gradle-$gradleVersion.zip"
+        val outputFile = outputDir.get().file("gradle-$gradleVersion.zip").asFile
         
         outputFile.parentFile.mkdirs()
         
         // Check if version already exists in git tags
-        if (GradleMirrorUtils.checkIfVersionExists(project, version, distType)) {
-            println("⏭️ Gradle $version-$distType already mirrored (tag exists), skipping...")
+        if (GradleMirrorUtils.checkIfVersionExists(project, gradleVersion)) {
+            println("⏭️ Gradle $gradleVersion already mirrored (tag exists), skipping...")
             return
         }
-        
-        println("Downloading Gradle $version from $downloadUrl")
+
+        println("Downloading Gradle $gradleVersion from $downloadUrl")
         
         // Download using java.net.URI/URL
         @Suppress("DEPRECATION")
@@ -240,14 +235,14 @@ abstract class MirrorGradleTask : DefaultTask() {
         println("Downloaded to ${outputFile.absolutePath}")
         
         // Copy to root for publishing
-        val publishFile = project.file("gradle-$version-$distType.zip")
+        val publishFile = project.file("gradle-$gradleVersion.zip")
         outputFile.copyTo(publishFile, overwrite = true)
-        
-        // Tag GitLab repository
-        GradleMirrorUtils.tagGitRepository(project, version, distType)
-        
+
+        // Tag git repository
+        GradleMirrorUtils.tagGitRepository(project, gradleVersion)
+
         // Automatically publish to Maven Local
-        GradleMirrorUtils.publishToMavenLocal(project, version, distType)
+        GradleMirrorUtils.publishToMavenLocal(project, gradleVersion)
     }
     
     private fun getLatestGradleVersion(): String {
@@ -284,20 +279,20 @@ abstract class MirrorGradleTask : DefaultTask() {
 
 abstract class MirrorAllGradleTask : DefaultTask() {
     @get:Input
-    abstract val distributionType: Property<String>
+    abstract val fromVersion: Property<String>
 
     @get:Input
-    abstract val fromVersion: Property<String>
+    abstract val distType: Property<String>
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
     @TaskAction
     fun mirrorAllGradle() {
-        val distType = distributionType.get()
         val fromVer = fromVersion.get()
+        val distributionType = distType.get()
 
-        println("🚀 Starting batch mirroring from Gradle $fromVer to latest ($distType distribution)")
+        println("🚀 Starting batch mirroring from Gradle $fromVer to latest ($distributionType distribution)")
 
         // Get all available Gradle versions from GitHub
         val allVersions = getAllGradleVersions()
@@ -315,16 +310,17 @@ abstract class MirrorAllGradleTask : DefaultTask() {
             try {
                 println("\n--- Processing Gradle $version ---")
 
-                if (GradleMirrorUtils.checkIfVersionExists(project, version, distType)) {
-                    println("⏭️ Gradle $version-$distType already mirrored (tag exists), skipping...")
+                val gradleVersion = "$version-$distributionType"
+                if (GradleMirrorUtils.checkIfVersionExists(project, gradleVersion)) {
+                    println("⏭️ Gradle $gradleVersion already mirrored (tag exists), skipping...")
                     skipped++
                     return@forEach
                 }
 
                 // Mirror this version
-                mirrorVersion(version, distType)
+                mirrorVersion(gradleVersion)
                 mirrored++
-                println("✅ Successfully mirrored Gradle $version-$distType")
+                println("✅ Successfully mirrored Gradle $gradleVersion")
 
             } catch (e: Exception) {
                 println("❌ Failed to mirror Gradle $version: ${e.message}")
@@ -409,9 +405,9 @@ abstract class MirrorAllGradleTask : DefaultTask() {
         return 0
     }
 
-    private fun mirrorVersion(version: String, distType: String) {
-        val downloadUrl = "https://services.gradle.org/distributions/gradle-$version-$distType.zip"
-        val outputFile = outputDir.get().file("gradle-$version-$distType.zip").asFile
+    private fun mirrorVersion(gradleVersion: String) {
+        val downloadUrl = "https://services.gradle.org/distributions/gradle-$gradleVersion.zip"
+        val outputFile = outputDir.get().file("gradle-$gradleVersion.zip").asFile
 
         outputFile.parentFile.mkdirs()
 
@@ -425,13 +421,13 @@ abstract class MirrorAllGradleTask : DefaultTask() {
         }
 
         // Copy to root for publishing
-        val publishFile = project.file("gradle-$version-$distType.zip")
+        val publishFile = project.file("gradle-$gradleVersion.zip")
         outputFile.copyTo(publishFile, overwrite = true)
 
-        // Tag GitLab repository
-        GradleMirrorUtils.tagGitRepository(project, version, distType)
+        // Tag git repository
+        GradleMirrorUtils.tagGitRepository(project, gradleVersion)
 
         // Publish to Maven Local
-        GradleMirrorUtils.publishToMavenLocal(project, version, distType)
+        GradleMirrorUtils.publishToMavenLocal(project, gradleVersion)
     }
 }
