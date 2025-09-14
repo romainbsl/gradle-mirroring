@@ -1,0 +1,42 @@
+# AI
+.claude
+
+# Gradle
+.gradle/
+build/
+gradle-*.zip
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+
+# Kotlin
+*.kt~
+
+# Logs
+*.log
+
+# Local configuration
+gradle.properties
+local.properties
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
