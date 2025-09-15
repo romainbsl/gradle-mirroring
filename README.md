@@ -29,17 +29,6 @@ A Kotlin JVM project that mirrors Gradle distributions by downloading them and u
 ./gradlew mirrorGradle -PgradleVersion=8.5 -PdistType=bin -PgitRemoteUrl=https://github.com/your-org/repo.git -PnexusUrl=http://your-nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
 ```
 
-**Batch Mirroring (8.0 to latest):**
-```bash
-# Mirror all versions from 8.0 to latest (bin distribution)
-./gradlew mirrorAllGradle -PfromVersion=8.0-bin -PdistType=bin -PnexusUrl=http://your-nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
-
-# Mirror all versions from 8.5 to latest (bin distribution)
-./gradlew mirrorAllGradle -PfromVersion=8.5-bin -PdistType=bin -PnexusUrl=http://your-nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
-
-# Mirror all versions with 'all' distribution type
-./gradlew mirrorAllGradle -PfromVersion=8.0-all -PdistType=all -PnexusUrl=http://your-nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
-```
 
 **Required parameters:**
 - `-PgradleVersion=8.5` (version: x.y[.z][-qualifier])
@@ -72,15 +61,6 @@ Downloads and publishes a single Gradle distribution:
 - **Auto-Publish**: Automatically publishes to Nexus repository
 - **Git Tagging**: Creates a tag `gradle-{version}-{type}` in git repository (optionally pushed to remote)
 
-### `mirrorAllGradle`
-
-**Batch mirrors multiple Gradle versions from a starting version to latest:**
-- **Version Range**: Mirrors all versions from `fromVersion` (default: 8.0) to latest
-- **GitHub Integration**: Fetches all available versions from GitHub releases API
-- **Smart Filtering**: Only processes stable versions, converts GitHub tags to Gradle format
-- **Duplicate Prevention**: Skips versions that already exist (via git tag check)
-- **Progress Tracking**: Reports mirrored, skipped, and failed counts
-- **Same Features**: Uses same download, publish, and tagging logic as `mirrorGradle`
 
 ### Maven Publication
 
@@ -116,10 +96,9 @@ org/gradle/gradle-8.4-all/8.4/gradle-8.4-all-8.4.zip    (all)
 ./gradlew mirrorGradle -PgradleVersion=8.5 -PdistType=bin -PnexusUrl=http://nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
 ./gradlew mirrorGradle -PgradleVersion=8.4 -PdistType=all -PnexusUrl=http://nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
 
-# Batch mirroring - mirror ALL versions from 8.0 to latest
-./gradlew mirrorAllGradle -PfromVersion=8.0-bin -PdistType=bin -PnexusUrl=http://nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
-./gradlew mirrorAllGradle -PfromVersion=8.5-bin -PdistType=bin -PnexusUrl=http://nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
-./gradlew mirrorAllGradle -PfromVersion=8.0-all -PdistType=all -PnexusUrl=http://nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
+# Mirror different versions and distribution types
+./gradlew mirrorGradle -PgradleVersion=8.4 -PdistType=bin -PnexusUrl=http://nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
+./gradlew mirrorGradle -PgradleVersion=8.5 -PdistType=all -PnexusUrl=http://nexus:8081/repository/maven-releases/ -PnexusUsername=user -PnexusPassword=pass
 
 # Each version creates a separate git tag (e.g., gradle-8.4-bin, gradle-8.5-all)
 # Subsequent runs will skip already-mirrored versions
