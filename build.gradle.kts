@@ -1,5 +1,3 @@
-import org.gradle.kotlin.dsl.provideDelegate
-import org.jetbrains.kotlin.gradle.dsl.KotlinVersion.Companion.fromVersion
 import java.io.FileOutputStream
 import java.net.URL
 
@@ -11,8 +9,6 @@ plugins {
 repositories {
     mavenCentral()
 }
-
-// No runtime dependencies needed
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -29,7 +25,6 @@ val nexusPassword: String? by project
 
 val gradleVersion: String? by project
 val distType: String? by project
-val gitRemoteUrl: String? by project
 
 publishing {
     publications {
@@ -37,12 +32,10 @@ publishing {
             groupId = "org.gradle"
             
             afterEvaluate {
-                val gradleVersionFull = gradleVersion ?: return@afterEvaluate
-
                 artifactId = "gradle"
-                version = gradleVersionFull
+                version = gradleVersion ?: error("gradleVersion is required. Use -PgradleVersion=8.5")
 
-                val wrapperFile = file("gradle-$gradleVersionFull.zip")
+                val wrapperFile = file("gradle-$gradleVersion-$distType.zip")
                 if (wrapperFile.exists()) {
                     artifact(wrapperFile) {
                         extension = "zip"
@@ -73,8 +66,8 @@ tasks.register<MirrorGradleTask>("mirrorGradle") {
     group = "gradle-mirror"
     description = "Downloads Gradle distribution and publishes to Nexus repository"
 
-    inputGradleVersion.set(gradleVersion)
-    inputDistType.set(distType)
+    inputGradleVersion.set(project.findProperty("gradleVersion") as? String ?: error("gradleVersion is required. Use -PgradleVersion=8.5"))
+    inputDistType.set(project.findProperty("distType") as? String ?: error("distType is required. Use -PdistType=bin or -PdistType=all"))
     outputDir.convention(layout.buildDirectory.dir("gradle-wrappers"))
 }
 
@@ -83,7 +76,6 @@ object GradleMirrorUtils {
         return try {
             val tagName = "gradle-$version-$distType"
             
-            // Check if tag exists locally using git command
             val process = ProcessBuilder("git", "tag", "-l", tagName)
                 .directory(project.rootDir)
                 .start()
@@ -91,15 +83,14 @@ object GradleMirrorUtils {
             val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
             val exitCode = process.waitFor()
             
-            val exists = exitCode == 0 && output.isNotEmpty()
-            
-            if (exists) {
-                println("✅ Tag '$tagName' exists locally")
-            } else {
-                println("❌ Tag '$tagName' does not exist locally")
-            }
-            
-            exists
+            (exitCode == 0 && output.isNotEmpty())
+                .also {
+                    if (it) {
+                        println("Tag '$tagName' already exists.")
+                    } else {
+                        println("Tag '$tagName' does not exist.")
+                    }
+                }
         } catch (e: Exception) {
             println("Warning: Could not check git tags: ${e.message}")
             false
@@ -114,7 +105,6 @@ object GradleMirrorUtils {
             
             println("Creating git tag '$tagName'...")
             
-            // Create tag locally
             val createProcess = ProcessBuilder("git", "tag", "-a", tagName, "-m", tagMessage)
                 .directory(project.rootDir)
                 .start()
@@ -128,7 +118,6 @@ object GradleMirrorUtils {
             
             println("✅ Successfully created git tag: $tagName")
             
-            // Push tag to remote if URL provided
             if (gitRemoteUrl != null) {
                 println("Pushing tag to remote: $gitRemoteUrl")
                 val pushProcess = ProcessBuilder("git", "push", "origin", tagName)
@@ -165,23 +154,13 @@ abstract class MirrorGradleTask : DefaultTask() {
         val version = inputGradleVersion.get()
         val distType = inputDistType.get()
 
-        // Validate that both parameters are provided
-        if (version.isBlank()) {
-            throw IllegalArgumentException("gradleVersion is required. Use -PgradleVersion=8.5")
-        }
-        if (distType.isBlank()) {
-            throw IllegalArgumentException("distType is required. Use -PdistType=bin or -PdistType=all")
-        }
-
-        // Validate version format against proper Gradle version regex
         val versionRegex = Regex("""^\d+\.\d+(?:\.\d+)?(?:-\w+)*$""")
         if (!versionRegex.matches(version)) {
-            throw IllegalArgumentException("Invalid Gradle version format: '$version'. Expected format: x.y[.z][-qualifier] (e.g., 8.5, 8.4.1, 7.6-rc-1)")
+            error("Invalid Gradle version format: '$version'. Expected format: x.y[.z][-qualifier] (e.g., 8.5, 8.4.1, 7.6-rc-1)")
         }
 
-        // Validate distribution type
         if (distType !in listOf("bin", "all")) {
-            throw IllegalArgumentException("Invalid distribution type: '$distType'. Must be 'bin' or 'all'")
+            error("Invalid distribution type: '$distType'. Must be 'bin' or 'all'")
         }
 
         val downloadUrl = "https://services.gradle.org/distributions/gradle-$version-$distType.zip"
@@ -189,7 +168,6 @@ abstract class MirrorGradleTask : DefaultTask() {
 
         outputFile.parentFile.mkdirs()
 
-        // Check if version already exists in git tags
         if (GradleMirrorUtils.checkIfVersionExists(project, version, distType)) {
             println("⏭️ Gradle $version-$distType already mirrored (tag exists), skipping...")
             return
@@ -197,7 +175,6 @@ abstract class MirrorGradleTask : DefaultTask() {
 
         println("Downloading Gradle $version-$distType from $downloadUrl")
         
-        // Download using java.net.URI/URL
         @Suppress("DEPRECATION")
         val url = URL(downloadUrl)
         url.openStream().use { input ->
@@ -208,11 +185,9 @@ abstract class MirrorGradleTask : DefaultTask() {
         
         println("Downloaded to ${outputFile.absolutePath}")
 
-        // Copy to root for publishing
         val publishFile = project.file("gradle-$version-$distType.zip")
         outputFile.copyTo(publishFile, overwrite = true)
 
-        // Tag git repository
         GradleMirrorUtils.tagGitRepository(project, version, distType)
     }
 }
